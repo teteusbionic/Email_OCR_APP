@@ -9,10 +9,12 @@ from streamlit_gsheets import GSheetsConnection
 st.set_page_config(page_title="Processador de Documentos", layout="wide")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# Inicializa o estado para evitar duplicatas
+if 'processado' not in st.session_state:
+    st.session_state.processado = False
+
 def format_document_info(label, value):
-    if value == "Não encontrado": 
-        return value
-    
+    if value == "Não encontrado": return value
     digits = re.sub(r'\D', '', value)
     
     if label == "CPF" and len(digits) == 11:
@@ -46,7 +48,7 @@ def validar_dados(data):
     return erros
 
 def extract_fields(text):
-    # Regex flexível para capturar "RG:" (como no arquivo CPF3.pdf) ou "RG SSP:"
+    # Regex flexível para capturar "RG:" ou "RG SSP:" conforme o arquivo CPF3.pdf
     patterns = {
         "NOME": r"Nome:\s*(.*)",
         "CPF": r"CPF:\s*([\d\.\-]+)",
@@ -54,7 +56,6 @@ def extract_fields(text):
         "Data de Nascimento": r"Data de Nascimento:\s*([\d/]+)",
         "Tipo Sanguíneo": r"Tipo\s*Sangu[íi]neo:\s*([a-zA-Z]{1,2}[\s]*[+-])"
     }
-    
     results = {}
     for field, pattern in patterns.items():
         match = re.search(pattern, text, re.IGNORECASE | re.UNICODE)
@@ -63,7 +64,7 @@ def extract_fields(text):
     return results
 
 # --- INTERFACE ---
-st.markdown("<h1 style='text-align: center;'>Envie documentos para serem processados.</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>Send documents to x@y.</h1>", unsafe_allow_html=True)
 
 col_left, col_right = st.columns([1, 1.2])
 
@@ -72,10 +73,9 @@ with col_left:
     uploaded_file = st.file_uploader("Arraste o PDF aqui", type=["pdf"])
 
     if uploaded_file:
-        with st.spinner('Processando arquivo...'):
+        with st.spinner('Analisando documento...'):
             images = convert_from_bytes(uploaded_file.read())
             full_text = "".join([pytesseract.image_to_string(img) for img in images])
-            
             data = extract_fields(full_text)
             
             colunas_ordem = ["NOME", "CPF", "RG", "Data de Nascimento", "Tipo Sanguíneo"]
@@ -89,34 +89,35 @@ with col_left:
             if erros:
                 for erro in erros:
                     st.error(erro)
-                st.warning("⚠️ Erro de validação. Planilha não atualizada.")
             else:
-                try:
-                    # ttl=0 garante que ele leia a planilha real e não uma versão antiga em cache
-                    existing_df = conn.read(ttl=0)
-                    new_row = pd.DataFrame([data_final])
-                    
-                    if existing_df is not None and not existing_df.empty:
-                        updated_df = pd.concat([existing_df, new_row], ignore_index=True)
-                    else:
-                        updated_df = new_row
+                # O BOTÃO impede o loop infinito
+                if st.button("Confirmar e Salvar na Planilha"):
+                    try:
+                        # Lê a planilha em tempo real (ttl=0)
+                        existing_df = conn.read(ttl=0)
+                        new_row = pd.DataFrame([data_final])
                         
-                    conn.update(data=updated_df)
-                    st.success("✅ Dados salvos com sucesso!")
-                    st.balloons()
-                    st.rerun() # Atualiza a tela para mostrar o novo dado na direita
-                except Exception as e:
-                    st.error(f"Erro ao salvar: {e}")
+                        if existing_df is not None and not existing_df.empty:
+                            updated_df = pd.concat([existing_df, new_row], ignore_index=True)
+                        else:
+                            updated_df = new_row
+                            
+                        conn.update(data=updated_df)
+                        st.success(f"✅ Dados de {data_final['NOME']} salvos!")
+                        st.balloons()
+                        # Pequena pausa para o usuário ver o sucesso antes de resetar se desejar
+                    except Exception as e:
+                        st.error(f"Erro ao salvar: {e}")
 
 with col_right:
-    st.header("Histórico")
+    st.header("Histórico (Google Sheets)")
     try:
-        # ttl=0 garante que a tabela mostre todos os registros em tempo real
+        # Mostra a planilha atualizada sem cache
         current_data = conn.read(ttl=0)
         if current_data is not None:
             st.dataframe(current_data, use_container_width=True, hide_index=True)
         
-        if st.button("🔄 Sincronizar"):
+        if st.button("🔄 Atualizar Tabela"):
             st.rerun()
     except Exception:
-        st.info("Conectando ao histórico...")
+        st.info("Conectando à base de dados...")

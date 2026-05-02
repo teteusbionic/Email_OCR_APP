@@ -64,36 +64,41 @@ def extract_fields(text):
     return results
 
 # --- INTERFACE ---
-st.markdown("<h1 style='text-align: center;'>Send documents to x@y.</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>Send documents to be processed.</h1>", unsafe_allow_html=True)
 
 col_left, col_right = st.columns([1, 1.2])
 
+# --- ESTADO DO APP ---
+# Criamos uma 'memória' para saber qual foi o último arquivo salvo
+if 'ultimo_arquivo' not in st.session_state:
+    st.session_state.ultimo_arquivo = None
+
+# --- LÓGICA DE UPLOAD NO COL_LEFT ---
 with col_left:
     st.header("Upload")
     uploaded_file = st.file_uploader("Arraste o PDF aqui", type=["pdf"])
 
     if uploaded_file:
-        with st.spinner('Analisando documento...'):
-            images = convert_from_bytes(uploaded_file.read())
-            full_text = "".join([pytesseract.image_to_string(img) for img in images])
-            data = extract_fields(full_text)
-            
-            colunas_ordem = ["NOME", "CPF", "RG", "Data de Nascimento", "Tipo Sanguíneo"]
-            data_final = {k: data.get(k, "Não encontrado") for k in colunas_ordem}
-            
-            st.subheader("Dados Extraídos")
-            st.write(data_final)
-            
-            erros = validar_dados(data_final)
-            
-            if erros:
-                for erro in erros:
-                    st.error(erro)
-            else:
-                # O BOTÃO impede o loop infinito
-                if st.button("Confirmar e Salvar na Planilha"):
+        # Só processa se o nome do arquivo for diferente do último salvo
+        if st.session_state.ultimo_arquivo != uploaded_file.name:
+            with st.spinner('Processando e salvando automaticamente...'):
+                # 1. OCR e Extração
+                images = convert_from_bytes(uploaded_file.read())
+                full_text = "".join([pytesseract.image_to_string(img) for img in images])
+                data = extract_fields(full_text)
+                
+                colunas_ordem = ["NOME", "CPF", "RG", "Data de Nascimento", "Tipo Sanguíneo"]
+                data_final = {k: data.get(k, "Não encontrado") for k in colunas_ordem}
+                
+                # 2. Validação
+                erros = validar_dados(data_final)
+                
+                if erros:
+                    for erro in erros:
+                        st.error(erro)
+                else:
                     try:
-                        # Lê a planilha em tempo real (ttl=0)
+                        # 3. Salva na Planilha (ttl=0 para ler a verdade atual)
                         existing_df = conn.read(ttl=0)
                         new_row = pd.DataFrame([data_final])
                         
@@ -103,21 +108,38 @@ with col_left:
                             updated_df = new_row
                             
                         conn.update(data=updated_df)
-                        st.success(f"✅ Dados de {data_final['NOME']} salvos!")
+                        
+                        # 4. TRAVA: Registra que este arquivo já foi salvo
+                        st.session_state.ultimo_arquivo = uploaded_file.name
+                        
+                        st.success(f"✅ {data_final['NOME']} adicionado com sucesso!")
                         st.balloons()
-                        # Pequena pausa para o usuário ver o sucesso antes de resetar se desejar
+                        st.rerun() # Atualiza a tabela na direita imediatamente
                     except Exception as e:
-                        st.error(f"Erro ao salvar: {e}")
+                        st.error(f"Erro no salvamento automático: {e}")
+        else:
+            # Se o arquivo já foi processado, apenas mostra os dados na tela
+            st.info("ℹ️ Este arquivo já foi enviado para a planilha.")
+            # Opcional: mostrar o que foi extraído apenas para conferência
 
 with col_right:
     st.header("Histórico (Google Sheets)")
-    try:
-        # Mostra a planilha atualizada sem cache
-        current_data = conn.read(ttl=0)
-        if current_data is not None:
-            st.dataframe(current_data, use_container_width=True, hide_index=True)
-        
-        if st.button("🔄 Atualizar Tabela"):
-            st.rerun()
-    except Exception:
-        st.info("Conectando à base de dados...")
+    
+    # Criamos um fragmento que se auto-atualiza a cada 30 segundos
+    @st.fragment(run_every="15s")
+    def mostrar_tabela_viva():
+        try:
+            # ttl=0 garante que ele ignore o cache e busque o dado real da planilha
+            current_data = conn.read(ttl=0)
+            
+            if current_data is not None:
+                st.dataframe(current_data, use_container_width=True, hide_index=True)
+                st.caption("🔄 Atualizado automaticamente a cada 30s")
+        except Exception:
+            st.info("Sincronizando com o Google Sheets...")
+
+    # Chamamos a função para exibir a tabela
+    mostrar_tabela_viva()
+    
+    if st.button("Forçar Atualização Agora"):
+        st.rerun()

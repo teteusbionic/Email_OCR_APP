@@ -95,17 +95,36 @@ with col_left:
                 st.warning("⚠️ Planilha não atualizada devido aos erros de validação.")
             else:
                 try:
-                    # Lê dados existentes para não apagar o que já tem
-                    existing_data = conn.read()
-                    # Cria novo DataFrame com a nova linha
-                    df_novo = pd.DataFrame([data_ordenada])
-                    updated_df = pd.concat([existing_data, df_novo], ignore_index=True)
-                    # Atualiza o Google Sheets
+                    # O segredo está aqui: ttl=0 ignora o cache e lê a planilha atualizada
+                    existing_df = conn.read(ttl=0)
+                    
+                    new_row = pd.DataFrame([data_final])
+                    
+                    # Garantimos que não haja erro se a planilha estiver vazia
+                    if existing_df is not None and not existing_df.empty:
+                        updated_df = pd.concat([existing_df, new_row], ignore_index=True)
+                    else:
+                        updated_df = new_row
+                    
+                    # Atualiza a planilha completa
                     conn.update(data=updated_df)
+                    
                     st.success("✅ Dados salvos com sucesso!")
                     st.balloons()
+                    # Força a atualização da interface para mostrar o novo dado imediatamente
+                    st.rerun()
+                    
                 except Exception as e:
-                    st.error(f"Erro na conexão: {e}")
+                    st.error(f"Falha na conexão com Google Sheets: {e}")
+
+# ... (na coluna da direita onde exibe a tabela)
+with col_right:
+    st.header("Histórico")
+    try:
+        # Também usamos ttl=0 aqui para o display sempre mostrar a verdade
+        current_data = conn.read(ttl=0)
+        if current_data is not None:
+            st.dataframe(current_data, use_container_width=True, hide_index=True)
 
 with col_right:
     st.header("Histórico Google Sheets")

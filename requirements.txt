@@ -2,3 +2,4 @@ streamlit
 pytesseract
 pdf2image
 pillow
+st-gsheets-connection

@@ -31,20 +31,20 @@ def format_document_info(label, value):
     return value
 
 def extract_fields(text):
-    # Dicionário de padrões Regex
     patterns = {
         "Nome": r"Nome:\s*(.*)",
         "CPF": r"CPF:\s*([\d\.\-]+)",
         "RG": r"RG\s*SSP:\s*([\d\.\-]+)",
         "Data de Nascimento": r"Data de Nascimento:\s*([\d/]+)",
-        "Tipo Sanguíneo": r"Tipo Sanguíneo:\s*([a-zA-Z+-]+)" # Padrão para letras e os sinais + ou -
+        # Este novo padrão aceita "Sanguineo", "Sanguíneo", "Sanguinio" etc.
+        "Tipo Sanguíneo": r"Tipo\s*Sangu[íi]neo:\s*([a-zA-Z]{1,2}[\s]*[+-])" 
     }
     
     results = {}
     for field, pattern in patterns.items():
-        match = re.search(pattern, text, re.IGNORECASE)
+        # O flag re.IGNORECASE é vital aqui
+        match = re.search(pattern, text, re.IGNORECASE | re.UNICODE)
         raw_value = match.group(1).strip() if match else "Não encontrado"
-        # Aplica a formatação
         results[field] = format_document_info(field, raw_value)
     return results
 

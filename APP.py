@@ -5,37 +5,14 @@ import re
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
+# --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Processador de Documentos", layout="wide")
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- VALIDAÇÕES ---
-def validar_dados(data):
-    erros = []
-    # CPF: 11 dígitos
-    cpf_limpo = re.sub(r'\D', '', data['CPF'])
-    if len(cpf_limpo) != 11:
-        erros.append(f"CPF inválido: {data['CPF']} (Esperado 11 dígitos)")
-
-    # RG: 9 dígitos (Formato XX.XXX.XXX.X)
-    rg_limpo = re.sub(r'\D', '', data['RG'])
-    if len(rg_limpo) != 9:
-        erros.append(f"RG inválido: {data['RG']} (Esperado 9 dígitos)")
-
-    # Tipo Sanguíneo: Máx 3 caracteres (A+, AB-, etc)
-    if len(data['Tipo Sanguíneo']) > 3 or data['Tipo Sanguíneo'] == "Não encontrado":
-        erros.append(f"Tipo Sanguíneo inválido: {data['Tipo Sanguíneo']}")
-
-    # Data de Nascimento: DD/MM/AAAA
-    if not re.match(r'\d{2}/\d{2}/\d{4}', data['Data de Nascimento']):
-        erros.append(f"Data de Nascimento fora do padrão: {data['Data de Nascimento']}")
-
-    return erros
-
 def format_document_info(label, value):
-    if value == "Não encontrado": return value
+    if value == "Não encontrado": 
+        return value
     
-    # Remove qualquer caractere que não seja número (incluindo o traço do exemplo)
     digits = re.sub(r'\D', '', value)
     
     if label == "CPF" and len(digits) == 11:
@@ -50,7 +27,26 @@ def format_document_info(label, value):
         
     return value
 
+def validar_dados(data):
+    erros = []
+    cpf_limpo = re.sub(r'\D', '', data['CPF'])
+    if len(cpf_limpo) != 11:
+        erros.append(f"CPF inválido: {data['CPF']} (Esperado 11 dígitos)")
+
+    rg_limpo = re.sub(r'\D', '', data['RG'])
+    if len(rg_limpo) != 9:
+        erros.append(f"RG inválido: {data['RG']} (Esperado 9 dígitos)")
+
+    if len(data['Tipo Sanguíneo']) > 3 or data['Tipo Sanguíneo'] == "Não encontrado":
+        erros.append(f"Tipo Sanguíneo inválido: {data['Tipo Sanguíneo']}")
+
+    if not re.match(r'\d{2}/\d{2}/\d{4}', data['Data de Nascimento']):
+        erros.append(f"Data de Nascimento inválida: {data['Data de Nascimento']}")
+
+    return erros
+
 def extract_fields(text):
+    # Regex flexível para capturar "RG:" (como no arquivo CPF3.pdf) ou "RG SSP:"
     patterns = {
         "NOME": r"Nome:\s*(.*)",
         "CPF": r"CPF:\s*([\d\.\-]+)",
@@ -58,6 +54,7 @@ def extract_fields(text):
         "Data de Nascimento": r"Data de Nascimento:\s*([\d/]+)",
         "Tipo Sanguíneo": r"Tipo\s*Sangu[íi]neo:\s*([a-zA-Z]{1,2}[\s]*[+-])"
     }
+    
     results = {}
     for field, pattern in patterns.items():
         match = re.search(pattern, text, re.IGNORECASE | re.UNICODE)
@@ -66,7 +63,7 @@ def extract_fields(text):
     return results
 
 # --- INTERFACE ---
-st.markdown("<h1 style='text-align: center;'>Envie documentos para x@y.</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>Envie documentos para serem processados.</h1>", unsafe_allow_html=True)
 
 col_left, col_right = st.columns([1, 1.2])
 
@@ -75,65 +72,51 @@ with col_left:
     uploaded_file = st.file_uploader("Arraste o PDF aqui", type=["pdf"])
 
     if uploaded_file:
-        with st.spinner('Processando...'):
+        with st.spinner('Processando arquivo...'):
             images = convert_from_bytes(uploaded_file.read())
             full_text = "".join([pytesseract.image_to_string(img) for img in images])
+            
             data = extract_fields(full_text)
             
-            # Garantir a ordem exata das colunas para o DataFrame
             colunas_ordem = ["NOME", "CPF", "RG", "Data de Nascimento", "Tipo Sanguíneo"]
-            data_ordenada = {k: data[k] for k in colunas_ordem}
+            data_final = {k: data.get(k, "Não encontrado") for k in colunas_ordem}
             
             st.subheader("Dados Extraídos")
-            st.write(data_ordenada)
+            st.write(data_final)
             
-            erros = validar_dados(data_ordenada)
+            erros = validar_dados(data_final)
             
             if erros:
                 for erro in erros:
                     st.error(erro)
-                st.warning("⚠️ Planilha não atualizada devido aos erros de validação.")
+                st.warning("⚠️ Erro de validação. Planilha não atualizada.")
             else:
                 try:
-                    # O segredo está aqui: ttl=0 ignora o cache e lê a planilha atualizada
+                    # ttl=0 garante que ele leia a planilha real e não uma versão antiga em cache
                     existing_df = conn.read(ttl=0)
-                    
                     new_row = pd.DataFrame([data_final])
                     
-                    # Garantimos que não haja erro se a planilha estiver vazia
                     if existing_df is not None and not existing_df.empty:
                         updated_df = pd.concat([existing_df, new_row], ignore_index=True)
                     else:
                         updated_df = new_row
-                    
-                    # Atualiza a planilha completa
+                        
                     conn.update(data=updated_df)
-                    
                     st.success("✅ Dados salvos com sucesso!")
                     st.balloons()
-                    # Força a atualização da interface para mostrar o novo dado imediatamente
-                    st.rerun()
-                    
+                    st.rerun() # Atualiza a tela para mostrar o novo dado na direita
                 except Exception as e:
-                    st.error(f"Falha na conexão com Google Sheets: {e}")
+                    st.error(f"Erro ao salvar: {e}")
 
-# ... (na coluna da direita onde exibe a tabela)
 with col_right:
     st.header("Histórico")
     try:
-        # Também usamos ttl=0 aqui para o display sempre mostrar a verdade
+        # ttl=0 garante que a tabela mostre todos os registros em tempo real
         current_data = conn.read(ttl=0)
         if current_data is not None:
             st.dataframe(current_data, use_container_width=True, hide_index=True)
-
-with col_right:
-    st.header("Histórico Google Sheets")
-    try:
-        # Mostra a planilha atualizada na tela
-        current_data = conn.read()
-        st.dataframe(current_data, use_container_width=True, hide_index=True)
         
-        if st.button("🔄 Sincronizar Tabela"):
+        if st.button("🔄 Sincronizar"):
             st.rerun()
-    except Exception as e:
-        st.info("Aguardando conexão com a planilha...")
+    except Exception:
+        st.info("Conectando ao histórico...")

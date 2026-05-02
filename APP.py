@@ -34,24 +34,30 @@ def validar_dados(data):
 
 def format_document_info(label, value):
     if value == "Não encontrado": return value
+    
+    # Remove qualquer caractere que não seja número (incluindo o traço do exemplo)
     digits = re.sub(r'\D', '', value)
     
     if label == "CPF" and len(digits) == 11:
         return f"{digits[:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:]}"
+    
     if label == "RG" and len(digits) == 9:
+        # Formato solicitado: XX.XXX.XXX.X
         return f"{digits[:2]}.{digits[2:5]}.{digits[5:8]}.{digits[8:]}"
+        
     if label == "Tipo Sanguíneo":
         return value.upper().strip()
+        
     return value
 
 def extract_fields(text):
     patterns = {
         "NOME": r"Nome:\s*(.*)",
         "CPF": r"CPF:\s*([\d\.\-]+)",
-        "RG": r"RG\s*SSP:\s*([\d\.\-]+)",
+        "RG": r"RG(?:\s*SSP)?:\s*([\d\.\-]+)",
         "Data de Nascimento": r"Data de Nascimento:\s*([\d/]+)",
         "Tipo Sanguíneo": r"Tipo\s*Sangu[íi]neo:\s*([a-zA-Z]{1,2}[\s]*[+-])"
-    }
+    
     results = {}
     for field, pattern in patterns.items():
         match = re.search(pattern, text, re.IGNORECASE | re.UNICODE)

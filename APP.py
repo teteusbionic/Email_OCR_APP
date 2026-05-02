@@ -1,8 +1,14 @@
 import streamlit as st
 import pytesseract
 from pdf2image import convert_from_bytes
-import numpy as np
-from PIL import Image
+import shutil
+
+# Check if tesseract is in the system path
+tesseract_path = shutil.which("tesseract")
+if tesseract_path:
+    pytesseract.pytesseract.tesseract_cmd = tesseract_path
+else:
+    st.error("Tesseract binary not found. Please ensure packages.txt is correct.")
 
 # UI Configuration
 st.set_page_config(page_title="PDF OCR Tool", layout="centered")

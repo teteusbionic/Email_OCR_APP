@@ -57,7 +57,7 @@ def extract_fields(text):
         "RG": r"RG(?:\s*SSP)?:\s*([\d\.\-]+)",
         "Data de Nascimento": r"Data de Nascimento:\s*([\d/]+)",
         "Tipo Sanguíneo": r"Tipo\s*Sangu[íi]neo:\s*([a-zA-Z]{1,2}[\s]*[+-])"
-    
+    }
     results = {}
     for field, pattern in patterns.items():
         match = re.search(pattern, text, re.IGNORECASE | re.UNICODE)

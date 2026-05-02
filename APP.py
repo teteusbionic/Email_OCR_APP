@@ -2,32 +2,47 @@ import streamlit as st
 import pytesseract
 from pdf2image import convert_from_bytes
 import re
+import pandas as pd
+from streamlit_gsheets import GSheetsConnection
 
-# --- Configuração da Interface ---
-st.set_page_config(page_title="Extrator de Documentos", layout="centered")
-st.markdown("<h1 style='text-align: center;'>Envie documentos para x@y.</h1>", unsafe_allow_html=True)
+# --- CONFIGURAÇÃO ---
+st.set_page_config(page_title="Document Processor", layout="wide")
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Função para formatar os dados e deixá-los padronizados
+# --- FUNÇÕES DE VALIDAÇÃO ---
+def validar_dados(data):
+    erros = []
+    
+    # Validar CPF (11 dígitos)
+    cpf_limpo = re.sub(r'\D', '', data['CPF'])
+    if len(cpf_limpo) != 11:
+        erros.append(f"CPF inválido: {data['CPF']} (Esperado 11 dígitos)")
+
+    # Validar RG (9 dígitos conforme solicitado)
+    rg_limpo = re.sub(r'\D', '', data['RG'])
+    if len(rg_limpo) != 9:
+        erros.append(f"RG inválido: {data['RG']} (Esperado 9 dígitos)")
+
+    # Validar Tipo Sanguíneo (Máx 3 caracteres: AB+, O-, etc)
+    if len(data['Tipo Sanguíneo']) > 3 or data['Tipo Sanguíneo'] == "Não encontrado":
+        erros.append(f"Tipo Sanguíneo inválido ou não encontrado: {data['Tipo Sanguíneo']}")
+
+    # Validar Data de Nascimento (Formato DD/MM/AAAA simplificado)
+    if not re.match(r'\d{2}/\d{2}/\d{4}', data['Data de Nascimento']):
+        erros.append(f"Data de Nascimento fora do padrão: {data['Data de Nascimento']}")
+
+    return erros
+
 def format_document_info(label, value):
-    if value == "Não encontrado":
-        return value
+    if value == "Não encontrado": return value
+    digits = re.sub(r'\D', '', value)
     
-    # Remove qualquer caractere que não seja número
-    digits_only = re.sub(r'\D', '', value)
-    
-    if label == "CPF" and len(digits_only) == 11:
-        return f"{digits_only[:3]}.{digits_only[3:6]}.{digits_only[6:9]}-{digits_only[9:]}"
-    
-    if label == "RG":
-        # Se o RG tiver 9 dígitos (padrão comum), formata como 22.327.258.9
-        if len(digits_only) == 9:
-            return f"{digits_only[:2]}.{digits_only[2:5]}.{digits_only[5:8]}.{digits_only[8:]}"
-        # Se tiver um número diferente de dígitos, apenas limpa e retorna
-        return digits_only 
-    
+    if label == "CPF" and len(digits) == 11:
+        return f"{digits[:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:]}"
+    if label == "RG" and len(digits) == 9:
+        return f"{digits[:2]}.{digits[2:5]}.{digits[5:8]}.{digits[8:]}"
     if label == "Tipo Sanguíneo":
         return value.upper().strip()
-    
     return value
 
 def extract_fields(text):
@@ -36,45 +51,59 @@ def extract_fields(text):
         "CPF": r"CPF:\s*([\d\.\-]+)",
         "RG": r"RG\s*SSP:\s*([\d\.\-]+)",
         "Data de Nascimento": r"Data de Nascimento:\s*([\d/]+)",
-        # Este novo padrão aceita "Sanguineo", "Sanguíneo", "Sanguinio" etc.
-        "Tipo Sanguíneo": r"Tipo\s*Sangu[íi]neo:\s*([a-zA-Z]{1,2}[\s]*[+-])" 
+        "Tipo Sanguíneo": r"Tipo\s*Sangu[íi]neo:\s*([a-zA-Z]{1,2}[\s]*[+-])"
     }
-    
     results = {}
     for field, pattern in patterns.items():
-        # O flag re.IGNORECASE é vital aqui
         match = re.search(pattern, text, re.IGNORECASE | re.UNICODE)
-        raw_value = match.group(1).strip() if match else "Não encontrado"
-        results[field] = format_document_info(field, raw_value)
+        raw_val = match.group(1).strip() if match else "Não encontrado"
+        results[field] = format_document_info(field, raw_val)
     return results
 
-# --- Lógica Principal do App ---
-uploaded_file = st.file_uploader("Upload do PDF", type=["pdf"])
+# --- INTERFACE ---
+col_left, col_right = st.columns([1, 1])
 
-if uploaded_file is not None:
-    with st.spinner('Processando e Formatando Documento...'):
-        # 1. OCR
-        images = convert_from_bytes(uploaded_file.read())
-        full_text = ""
-        for img in images:
-            full_text += pytesseract.image_to_string(img)
-        
-        # 2. Extração
-        data = extract_fields(full_text)
-        
-        st.write("### Dados Estruturados do Documento")
-        
-        # 3. Exibição na Tela
-        container = st.container(border=True)
-        with container:
-            st.write(f"**Nome:** {data['Nome']}")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.info(f"**CPF**\n\n{data['CPF']}")
-                st.info(f"**RG**\n\n{data['RG']}")
-            with col2:
-                st.info(f"**Nascimento**\n\n{data['Data de Nascimento']}")
-                st.info(f"**Tipo Sanguíneo**\n\n{data['Tipo Sanguíneo']}")
+with col_left:
+    st.header("Upload de Documentos")
+    uploaded_file = st.file_uploader("Arraste o PDF aqui", type=["pdf"])
 
-        if st.checkbox("Mostrar texto bruto (OCR)"):
-            st.text(full_text)
+    if uploaded_file:
+        with st.spinner('Analisando...'):
+            images = convert_from_bytes(uploaded_file.read())
+            full_text = "".join([pytesseract.image_to_string(img) for img in images])
+            data = extract_fields(full_text)
+            
+            st.subheader("Resultado do Scan")
+            st.json(data)
+            
+            # Validação
+            erros = validar_dados(data)
+            
+            if erros:
+                for erro in erros:
+                    st.error(erro)
+                st.warning("⚠️ Planilha não atualizada devido aos erros acima.")
+            else:
+                # Se não houver erros, enviar para o Sheets
+                try:
+                    df_novo = pd.DataFrame([data])
+                    # Lê dados existentes
+                    existing_data = conn.read()
+                    updated_df = pd.concat([existing_data, df_novo], ignore_index=True)
+                    # Atualiza a planilha
+                    conn.update(data=updated_df)
+                    st.success("✅ Dados validados e salvos no Google Sheets!")
+                except Exception as e:
+                    st.error(f"Erro ao conectar com Google Sheets: {e}")
+
+with col_right:
+    st.header("Histórico (Google Sheets)")
+    try:
+        # Exibe a planilha em tempo real
+        current_data = conn.read()
+        st.dataframe(current_data, use_container_width=True, hide_index=True)
+        
+        if st.button("Atualizar Tabela"):
+            st.rerun()
+    except:
+        st.info("Conecte sua planilha para visualizar os dados aqui.")
